@@ -7,6 +7,19 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #pragma comment(lib, "ws2_32.lib")
+#include <stdio.h>
+#include <sys/types.h>
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <unordered_map>
+#include <vector>
+#include <algorithm>
+#include <fstream>
+#include <sys/types.h>
+#include <iterator>
+#include <sstream>
+
 
 
 #define MAX_CONNECTIONS 10
@@ -56,6 +69,29 @@ int create_socket(int port)
     }
 
     return sockfd;
+}
+// wczytaj plik i zwróć go w formie odpowiedzi http
+std::string get_file(const std::string& file_path)
+{
+
+    std::ifstream file_stream(file_path, std::ios::binary | std::ios::ate);
+    if (!file_stream)
+    {
+        return "Blad ifstream";
+    }
+
+    int file_size = file_stream.tellg();
+    std::string response;
+    response += "HTTP/1.1 200 OK\r\n";
+    response += "Content-Type: ";
+    response += "text/html\r\n";
+    response += "Content-Length: " + std::to_string(file_size) + "\r\n";
+    response += "\r\n";
+
+    file_stream.seekg(0, std::ios::beg);
+    response.append(std::istreambuf_iterator<char>(file_stream), std::istreambuf_iterator<char>());
+
+    return response;
 }
 
 int main()
