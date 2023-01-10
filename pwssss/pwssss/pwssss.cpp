@@ -278,7 +278,46 @@ int server(int port)
 
                     lua_pop(L, 1);
                 }
-                 
+                else
+                {
+                    // zwracamy plik statyczny
+                    std::string file_name = extract_file_name(request);
+                    response = get_file(file_name);
+                }
+
+                std::cout << "Wysyłanie odpowiedzi " << response << std::endl;
+
+                int bytes_sent = SSL_write(ssl_map[fd], response.c_str(), response.size());
+                if (bytes_sent < 0)
+                {
+                    std::cerr << "Blad SSL_write" << std::endl;
+                    ERR_print_errors_fp(stderr);
+                    SSL_free(ssl_map[fd]);
+                    close(fd);
+                    continue;
+                }
+            }
+        }
+
+        client_fds.erase(std::remove_if(client_fds.begin(), client_fds.end(), [&](const int& fd)
+            {
+                int error = 0;
+                socklen_t len = sizeof(error);
+                int ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len);
+                if (ret < 0 || error != 0) {
+                    close(fd);
+                    return true;
+                }
+                return false;
+            }), client_fds.end());
+    }
+
+    SSL_CTX_free(ctx);
+    close(sockfd);
+    lua_close(L);
+
+    return 1;
+}
 
 
 int main()
