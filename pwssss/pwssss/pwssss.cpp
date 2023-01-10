@@ -19,8 +19,9 @@
 #include <sys/types.h>
 #include <iterator>
 #include <sstream>
-
-
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <lua.hpp>
 
 #define MAX_CONNECTIONS 10
 #define MAX_BUFFER_SIZE 1024
@@ -94,11 +95,119 @@ std::string get_file(const std::string& file_path)
     return response;
 }
 
+// wyłuskaj nazwę pliku z requestu http
+std::string extract_file_name(std::string request)
+{
+    std::istringstream iss(request);
+    std::vector<std::string> components((std::istream_iterator<std::string>(iss)),
+        std::istream_iterator<std::string>());
+
+    std::string resource = components[1];
+    std::size_t pos = resource.find('?');
+    std::string file_name = resource.substr(1, pos);
+
+    return file_name;
+}
+
+int server(int port)
+{
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_ssl_algorithms();
+
+    //przygotowanie OpenSSL
+    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
+    if (ctx == nullptr)
+    {
+        std::cerr << "Blad w SSL_CTX_new" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0)
+    {
+        std::cerr << "Blad SSL_CTX_use_certificate_file" << std::endl;
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+    if (SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0)
+    {
+        std::cerr << "Blad SSL_CTX_use_PrivateKey_file" << std::endl;
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+    if (!SSL_CTX_check_private_key(ctx))
+    {
+        std::cerr << "Blad SSL_CTX_check_private_key" << std::endl;
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+
+    //glowny socket
+    int sockfd = create_socket(port);
+
+    //inicjalizacja LUA
+    lua_State* L = luaL_newstate();
+    luaL_openlibs(L);
+
+    std::unordered_map<int, SSL*> ssl_map;
+    std::vector<int> client_fds;
+
+    //petla nasluchiwania
+    while (true)
+    {
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(sockfd, &read_fds);
+        for (const auto& fd : client_fds)
+        {
+            FD_SET(fd, &read_fds);
+        }
+
+        int max_fd = sockfd;
+        for (const auto& fd : client_fds)
+        {
+            if (fd > max_fd)
+            {
+                max_fd = fd;
+            }
+        }
+        //sprawdzamy czy pojawilo sie nowe połaczenie
+        if (select(max_fd + 1, &read_fds, nullptr, nullptr, nullptr) < 0)
+        {
+            std::cerr << "Blad select" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        if (FD_ISSET(sockfd, &read_fds))
+        {
+            sockaddr_in cli_addr;
+            socklen_t cli_len = sizeof(cli_addr);
+            int client_fd = accept(sockfd, (sockaddr*)&cli_addr, &cli_len);
+            if (client_fd < 0)
+            {
+                std::cerr << "Blad accept" << std::endl;
+                exit(EXIT_FAILURE);
+            }
+
+            SSL* ssl = SSL_new(ctx);
+            SSL_set_fd(ssl, client_fd);
+            if (SSL_accept(ssl) < 0)
+            {
+                std::cerr << "Blad SSL_accept" << std::endl;
+                ERR_print_errors_fp(stderr);
+                SSL_free(ssl);
+                close(client_fd);
+                continue;
+            }
+
+            ssl_map[client_fd] = ssl;
+            client_fds.push_back(client_fd);
+        }
+
+
 int main()
 {
     server(8080);
 
     return 0;
 }
-
-
