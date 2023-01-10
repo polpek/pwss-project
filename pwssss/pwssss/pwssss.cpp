@@ -203,6 +203,48 @@ int server(int port)
             ssl_map[client_fd] = ssl;
             client_fds.push_back(client_fd);
         }
+        //odczytujemy dane z socketow jesli są dostepne
+        for (const auto& fd : client_fds)
+        {
+            if (FD_ISSET(fd, &read_fds))
+            {
+                char buffer[BUFFER_SIZE];
+                int bytes_received = SSL_read(ssl_map[fd], buffer, BUFFER_SIZE);
+                if (bytes_received < 0)
+                {
+                    std::cerr << "Blad SSL_read" << std::endl;
+                    ERR_print_errors_fp(stderr);
+                    SSL_free(ssl_map[fd]);
+                    close(fd);
+                    continue;
+                }
+                else if (bytes_received == 0)
+                {
+                    SSL_free(ssl_map[fd]);
+                    close(fd);
+                    continue;
+                }
+
+                std::string request(buffer, bytes_received);
+                std::cout << "Otrzymano request: " << request << std::endl;
+
+                std::string response = "";
+
+                //sprawdzamy czy w requescie jest nazwa skryptu lua
+                if (request.find(".lua") != std::string::npos)
+                {
+
+                    std::string script_name = "script.lua";
+                    size_t pos = request.find("/");
+                    if (pos != std::string::npos) {
+
+                        size_t end_pos = request.find(" ", pos);
+                        if (end_pos != std::string::npos) {
+
+                            script_name = request.substr(pos + 1, end_pos - pos - 1);
+
+                        }
+                    }
 
 
 int main()
