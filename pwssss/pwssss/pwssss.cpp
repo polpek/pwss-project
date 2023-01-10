@@ -225,6 +225,7 @@ int server(int port)
                     continue;
                 }
 
+
                 std::string request(buffer, bytes_received);
                 std::cout << "Otrzymano request: " << request << std::endl;
 
@@ -245,6 +246,39 @@ int server(int port)
 
                         }
                     }
+
+                 //ladujemy skrypt
+                    if (luaL_loadfile(L, script_name.c_str()))
+                    {
+                        std::cerr << "Blad ladowania skryptu: " << lua_tostring(L, -1) << std::endl;
+                        return 1;
+                    }
+
+                 //przekazujemy mu argument
+                    lua_pushstring(L, request.c_str());
+
+                    lua_setglobal(L, "arg1");
+
+                 //wykonanie skryptu
+                    if (lua_pcall(L, 0, 1, 0))
+                    {
+                        std::cerr << "Blad wykonywania skryptu: " << lua_tostring(L, -1) << std::endl;
+                        return 1;
+                    }
+
+                 //pobranie odpowiedzi
+                    std::string lua_response = lua_tostring(L, -1);
+
+                    response = "HTTP/1.1 200 OK\r\n";
+                    response += "Content-Type: text/html\r\n";
+                    response += "Content-Length: " + std::to_string(lua_response.size()) + "\r\n";
+                    response += "\r\n";
+                    response += lua_response;
+
+
+                    lua_pop(L, 1);
+                }
+                 
 
 
 int main()
