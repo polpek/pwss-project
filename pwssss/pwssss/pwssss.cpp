@@ -23,6 +23,7 @@
 #include <openssl/err.h>
 #include <lua.hpp>
 
+
 #define MAX_CONNECTIONS 10
 #define MAX_BUFFER_SIZE 1024
 
@@ -46,7 +47,7 @@ int create_socket(int port)
     }
 
     int opt = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt)) < 0)
     {
         std::cerr << "Blad w setsockopt" << std::endl;
         exit(EXIT_FAILURE);
@@ -196,7 +197,7 @@ int server(int port)
                 std::cerr << "Blad SSL_accept" << std::endl;
                 ERR_print_errors_fp(stderr);
                 SSL_free(ssl);
-                close(client_fd);
+                closesocket(client_fd);
                 continue;
             }
 
@@ -215,13 +216,13 @@ int server(int port)
                     std::cerr << "Blad SSL_read" << std::endl;
                     ERR_print_errors_fp(stderr);
                     SSL_free(ssl_map[fd]);
-                    close(fd);
+                    closesocket(fd);
                     continue;
                 }
                 else if (bytes_received == 0)
                 {
                     SSL_free(ssl_map[fd]);
-                    close(fd);
+                    closesocket(fd);
                     continue;
                 }
 
@@ -293,7 +294,7 @@ int server(int port)
                     std::cerr << "Blad SSL_write" << std::endl;
                     ERR_print_errors_fp(stderr);
                     SSL_free(ssl_map[fd]);
-                    close(fd);
+                    closesocket(fd);
                     continue;
                 }
             }
@@ -303,9 +304,9 @@ int server(int port)
             {
                 int error = 0;
                 socklen_t len = sizeof(error);
-                int ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len);
+                int ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, (char*)&error, &len);
                 if (ret < 0 || error != 0) {
-                    close(fd);
+                    closesocket(fd);
                     return true;
                 }
                 return false;
@@ -313,7 +314,7 @@ int server(int port)
     }
 
     SSL_CTX_free(ctx);
-    close(sockfd);
+    closesocket(sockfd);
     lua_close(L);
 
     return 1;
