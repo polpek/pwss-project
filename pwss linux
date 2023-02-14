@@ -26,8 +26,8 @@
 
 
 // kompilacja
-// -g++ pwss.cpp -I/usr/include/lua5.2 -lssl -lcrypto -llua5.2 -o pwss
-
+// g++ lua-server.cpp -I/usr/include/lua5.2 -lssl -lcrypto -llua5.2 -o lua
+// ./lua
 
 #define MAX_CONNECTIONS 10
 #define MAX_BUFFER_SIZE 1024
@@ -43,13 +43,10 @@ int create_socket(int port)
 {
     int sockfd;
     sockaddr_in serv_addr;
-  
-    //ENV{'PERL_LWP_SSL_VERIFY_HOSTNAME'} = 0;
+
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0)
     {
-
-        
         std::cerr << "Blad tworzenia gniazda" << std::endl;
         exit(EXIT_FAILURE);
     }
@@ -77,6 +74,7 @@ int create_socket(int port)
         std::cerr << "Blad w listen" << std::endl;
         exit(EXIT_FAILURE);
     }
+
     return sockfd;
 }
 
@@ -84,23 +82,28 @@ int create_socket(int port)
 std::string get_file(const std::string &file_path)
 {
 
-    std::ifstream file_stream(file_path, std::ios::binary| std::ios::ate);
-    if (!file_stream)
+    std::ifstream file_stream(file_path, std::ios::binary | std::ios::ate);
+
+    std::string content = "";
+    std::string response;
+    if (file_stream)
     {
-        return "Blad ifstream";
+
+        file_stream.seekg(0, std::ios::beg);
+        content.append(std::istreambuf_iterator<char>(file_stream), std::istreambuf_iterator<char>());
+        response += "HTTP/1.1 200 OK\r\n";
+    }
+    else
+    {
+        content = "Nie znaleziono pliku";
+        response += "HTTP/1.1 404 Not Found\r\n";
     }
 
-    int file_size = file_stream.tellg();
-    std::string response;
-    response += "HTTP/1.1 200 OK\r\n";
     response += "Content-Type: ";
     response += "text/html\r\n";
-    response += "Content-Length: " + std::to_string(file_size) + "\r\n";
+    response += "Content-Length: " + std::to_string(content.size()) + "\r\n";
     response += "\r\n";
-
-    file_stream.seekg(0, std::ios::beg);
-    response.append(std::istreambuf_iterator<char>(file_stream), std::istreambuf_iterator<char>());
-
+    response += content;
     return response;
 }
 
@@ -124,7 +127,7 @@ int server(int port)
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
 
-    //przygotowanie OpenSSL
+    // przygotowanie OpenSSL
     SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
     if (ctx == nullptr)
     {
@@ -151,17 +154,17 @@ int server(int port)
         exit(EXIT_FAILURE);
     }
 
-    //glowny socket
+    // glowny socket
     int sockfd = create_socket(port);
 
-    //inicjalizacja LUA
+    // inicjalizacja LUA
     lua_State *L = luaL_newstate();
     luaL_openlibs(L);
 
     std::unordered_map<int, SSL *> ssl_map;
     std::vector<int> client_fds;
 
-    //petla nasluchiwania
+    // petla nasluchiwania
     while (true)
     {
         fd_set read_fds;
@@ -181,7 +184,7 @@ int server(int port)
             }
         }
 
-        //sprawdzamy czy pojawilo sie nowe połaczenie
+        // sprawdzamy czy pojawilo sie nowe połaczenie
         if (select(max_fd + 1, &read_fds, nullptr, nullptr, nullptr) < 0)
         {
             std::cerr << "Blad select" << std::endl;
@@ -214,7 +217,7 @@ int server(int port)
             client_fds.push_back(client_fd);
         }
 
-        //odczytujemy dane z socketow jesli są dostepne
+        // odczytujemy dane z socketow jesli są dostepne
         for (const auto &fd : client_fds)
         {
             if (FD_ISSET(fd, &read_fds))
@@ -241,53 +244,78 @@ int server(int port)
 
                 std::string response = "";
 
-                //sprawdzamy czy w requescie jest nazwa skryptu lua
+                // sprawdzamy czy w requescie jest nazwa skryptu lua
                 if (request.find(".lua") != std::string::npos)
                 {
 
                     std::string script_name = "script.lua";
                     size_t pos = request.find("/");
-                    if (pos != std::string::npos) {
-                       
-                        size_t end_pos = request.find(" ", pos);
-                        if (end_pos != std::string::npos) {
-                       
-                             script_name = request.substr(pos + 1, end_pos - pos - 1);
-                       
+                    if (pos != std::string::npos)
+                    {
+
+                        // sprawdzamy czy w requeście są jakieś parametry po znaku ?
+                        size_t end_pos = request.find("?", pos);
+                        size_t http_pos = request.find("HTTP", pos);
+                        if (end_pos != std::string::npos && end_pos < http_pos)
+                        {
+
+                            // wyciągamy nazwę skrytpu do uruchomienia
+                            script_name = request.substr(pos + 1, end_pos - pos - 1);
+                        }
+                        else
+                        { // jeśli nie ma parametrów
+                            end_pos = request.find(" ", pos);
+                            if (end_pos != std::string::npos)
+                            {
+                                // wyciągamy nazwę skrytpu do uruchomienia
+                                script_name = request.substr(pos + 1, end_pos - pos - 1);
+                            }
                         }
                     }
 
-                    
-                    //ladujemy skrypt
+                    // ladujemy skrypt
                     if (luaL_loadfile(L, script_name.c_str()))
                     {
-                        std::cerr << "Blad ladowania skryptu: " << lua_tostring(L, -1) << std::endl;
-                        return 1;
+                        std::string error = "Blad ladowania skryptu: ";
+                        error.append(lua_tostring(L, -1));
+                        std::cerr << error << std::endl;
+                        response = "HTTP/1.1 404 Not Found\r\n";
+                        response += "Content-Length: " + std::to_string(error.size()) + "\r\n";
+                        response += "\r\n";
+                        response += error;
                     }
-
-                    //przekazujemy mu argument
-                    lua_pushstring(L, request.c_str());
-
-                    lua_setglobal(L, "arg1");
-
-                    //wykonanie skryptu
-                    if (lua_pcall(L, 0, 1, 0))
+                    else
                     {
-                        std::cerr << "Blad wykonywania skryptu: " << lua_tostring(L, -1) << std::endl;
-                        return 1;
+                        // przekazujemy mu argument
+                        lua_pushstring(L, request.c_str());
+
+                        lua_setglobal(L, "arg1");
+
+                        // wykonanie skryptu
+                        if (lua_pcall(L, 0, 1, 0))
+                        {
+                            std::string error = "Blad wykonywania skryptu: ";
+                            error.append(lua_tostring(L, -1));
+                            std::cerr << error << std::endl;
+                            response = "HTTP/1.1 500 Server Error\r\n";
+                            response += "Content-Length: " + std::to_string(error.size()) + "\r\n";
+                            response += "\r\n";
+                            response += error;
+                        }
+                        else
+                        {
+                            // pobranie odpowiedzi
+                            std::string lua_response = lua_tostring(L, -1);
+
+                            response = "HTTP/1.1 200 OK\r\n";
+                            response += "Content-Type: text/html\r\n";
+                            response += "Content-Length: " + std::to_string(lua_response.size()) + "\r\n";
+                            response += "\r\n";
+                            response += lua_response;
+
+                            lua_pop(L, 1);
+                        }
                     }
-
-                    //pobranie odpowiedzi
-                    std::string lua_response = lua_tostring(L, -1);
-
-                    response = "HTTP/1.1 200 OK\r\n";
-                    response += "Content-Type: text/html\r\n";
-                    response += "Content-Length: " + std::to_string(lua_response.size()) + "\r\n";
-                    response += "\r\n";
-                    response += lua_response;
-
-
-                    lua_pop(L, 1);
                 }
                 else
                 {
@@ -311,7 +339,7 @@ int server(int port)
         }
 
         client_fds.erase(std::remove_if(client_fds.begin(), client_fds.end(), [&](const int &fd)
-        {
+                                        {
             int error = 0;
             socklen_t len = sizeof(error);
             int ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len);
@@ -319,14 +347,13 @@ int server(int port)
                 close(fd);
                 return true;
             }
-            return false; 
-        }), client_fds.end());
+            return false; }),
+                         client_fds.end());
     }
 
     SSL_CTX_free(ctx);
     close(sockfd);
     lua_close(L);
-
     return 1;
 }
 
